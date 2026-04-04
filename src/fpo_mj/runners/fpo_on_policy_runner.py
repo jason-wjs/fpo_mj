@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import statistics
+import time
 from collections import deque
-from time import perf_counter
+from dataclasses import asdict
 
 import torch
 
@@ -13,7 +14,7 @@ from fpo_mj.modules import ActorCritic, EmpiricalNormalization
 
 
 class _TensorboardLogger:
-  def __init__(self, log_dir: str):
+  def __init__(self, log_dir: str, cfg_dict: dict | None = None):
     from torch.utils.tensorboard import SummaryWriter
 
     self.writer = SummaryWriter(log_dir=log_dir, flush_secs=10)
@@ -25,26 +26,38 @@ class _TensorboardLogger:
   def save_model(self, path: str, _step: int) -> None:
     return None
 
+  def store_config(self, _env_cfg, _train_cfg: dict) -> None:
+    return None
+
+  def save_file(self, _path: str) -> None:
+    return None
+
   def close(self) -> None:
     self.writer.close()
 
 
 class _WandbLogger:
-  def __init__(self, log_dir: str, project: str, run_name: str):
-    import wandb
+  def __init__(self, log_dir: str, cfg_dict: dict):
+    from rsl_rl.utils.wandb_utils import WandbSummaryWriter
 
-    self._wandb = wandb
-    self._wandb.init(project=project, name=run_name or None, dir=log_dir)
+    self.writer = WandbSummaryWriter(log_dir=log_dir, flush_secs=10, cfg=cfg_dict)
     self.logger_type = "wandb"
 
   def add_scalar(self, tag: str, value: float, step: int) -> None:
-    self._wandb.log({tag: value}, step=step)
+    self.writer.add_scalar(tag, value, step)
 
   def save_model(self, path: str, _step: int) -> None:
-    self._wandb.save(path, base_path=os.path.dirname(path))
+    self.writer.save_model(path, _step)
+
+  def store_config(self, env_cfg, train_cfg: dict) -> None:
+    self.writer.store_config(env_cfg, train_cfg)
+
+  def save_file(self, path: str) -> None:
+    self.writer.save_file(path)
 
   def close(self) -> None:
-    self._wandb.finish()
+    self.writer.stop()
+    self.writer.close()
 
 
 class FpoOnPolicyRunner:
@@ -75,6 +88,7 @@ class FpoOnPolicyRunner:
     self.log_dir = log_dir
     self.writer = None
     self.tot_timesteps = 0
+    self.tot_time = 0.0
     self.current_learning_iteration = 0
     self.git_status_repos: list[str] = []
 
@@ -103,13 +117,12 @@ class FpoOnPolicyRunner:
     lenbuffer = deque(maxlen=100)
     cur_reward_sum = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
     cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
+    ep_extras: list[dict] = []
+    start_it = self.current_learning_iteration
+    total_it = start_it + num_learning_iterations
 
-    for it in range(self.current_learning_iteration, self.current_learning_iteration + num_learning_iterations):
-      iteration_start = perf_counter()
-      print(
-        f"[FPO] Starting iteration {it}: collecting {self.num_steps_per_env} rollout steps across {self.env.num_envs} envs.",
-        flush=True,
-      )
+    for it in range(start_it, total_it):
+      start = time.time()
       for _ in range(self.num_steps_per_env):
         actions = self.alg.act(actor_obs, critic_obs)
         next_obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
@@ -119,6 +132,10 @@ class FpoOnPolicyRunner:
         rewards = rewards.to(self.device)
         dones = dones.to(self.device)
         self.alg.process_env_step(rewards, dones, infos)
+        if "episode" in infos:
+          ep_extras.append(infos["episode"])
+        elif "log" in infos:
+          ep_extras.append(infos["log"])
         cur_reward_sum += rewards
         cur_episode_length += 1
         new_ids = (dones > 0).nonzero(as_tuple=False)
@@ -128,6 +145,9 @@ class FpoOnPolicyRunner:
           cur_reward_sum[new_ids] = 0
           cur_episode_length[new_ids] = 0
 
+      stop = time.time()
+      collect_time = stop - start
+      start = stop
       self.alg.compute_returns(critic_obs)
       loss_dict = self.alg.update(
         obs_normalizer=self.obs_normalizer if self.empirical_normalization else None,
@@ -135,16 +155,23 @@ class FpoOnPolicyRunner:
       )
       if self.alg.ema is not None:
         self.alg.ema.update()
+      stop = time.time()
+      learn_time = stop - start
       self.current_learning_iteration = it
-      self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
-      self._log_iteration(it, loss_dict, rewbuffer, lenbuffer)
-      iteration_duration = perf_counter() - iteration_start
-      print(
-        f"[FPO] Finished iteration {it}: total_timesteps={self.tot_timesteps}, duration_s={iteration_duration:.2f}",
-        flush=True,
+      self._log_iteration(
+        it=it,
+        start_it=start_it,
+        total_it=total_it,
+        collect_time=collect_time,
+        learn_time=learn_time,
+        loss_dict=loss_dict,
+        rewbuffer=rewbuffer,
+        lenbuffer=lenbuffer,
+        ep_extras=ep_extras,
       )
       if self.log_dir is not None and it % self.save_interval == 0:
         self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
+      ep_extras.clear()
 
     if self.log_dir is not None:
       self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
@@ -253,19 +280,113 @@ class FpoOnPolicyRunner:
     if self.log_dir is None or self.writer is not None:
       return
     os.makedirs(self.log_dir, exist_ok=True)
+    cfg_dict = self._build_logger_cfg_dict()
+    env_cfg = getattr(self.env, "cfg", None) or getattr(self.env.unwrapped, "cfg", None)
     if self.cfg.logger == "wandb":
-      self.writer = _WandbLogger(self.log_dir, self.cfg.wandb_project, self.cfg.run_name)
+      self.writer = _WandbLogger(self.log_dir, cfg_dict)
     else:
-      self.writer = _TensorboardLogger(self.log_dir)
+      self.writer = _TensorboardLogger(self.log_dir, cfg_dict)
+    self.writer.store_config(env_cfg, cfg_dict)
     self.writer.add_scalar("System/initialized", 1.0, 0)
 
-  def _log_iteration(self, iteration: int, loss_dict: dict, rewbuffer: deque, lenbuffer: deque):
+  def _log_iteration(
+    self,
+    it: int,
+    start_it: int,
+    total_it: int,
+    collect_time: float,
+    learn_time: float,
+    loss_dict: dict,
+    rewbuffer: deque,
+    lenbuffer: deque,
+    ep_extras: list[dict],
+  ):
     if self.writer is None:
       return
-    self.writer.add_scalar("Loss/surrogate_loss", loss_dict["surrogate_loss"], iteration)
-    self.writer.add_scalar("Loss/value_loss", loss_dict["value_loss"], iteration)
+    collection_size = self.num_steps_per_env * self.env.num_envs
+    iteration_time = collect_time + learn_time
+    self.tot_timesteps += collection_size
+    self.tot_time += iteration_time
+
+    extras_string = ""
+    if ep_extras:
+      for key in ep_extras[0]:
+        values: list[float] = []
+        for ep_info in ep_extras:
+          if key not in ep_info:
+            continue
+          value = ep_info[key]
+          if isinstance(value, torch.Tensor):
+            if value.numel() == 0:
+              continue
+            values.extend(value.detach().reshape(-1).cpu().tolist())
+          else:
+            values.append(float(value))
+        if not values:
+          continue
+        mean_value = statistics.mean(values)
+        tag = key if "/" in key else f"Episode/{key}"
+        label = f"{key}:" if "/" in key else f"Mean episode {key}:"
+        self.writer.add_scalar(tag, mean_value, it)
+        extras_string += f"{label:>40} {mean_value:.4f}\n"
+
+    scalar_losses = {key: value for key, value in loss_dict.items() if key != "metrics"}
+    for key, value in scalar_losses.items():
+      self.writer.add_scalar(f"Loss/{key}", value, it)
+    self.writer.add_scalar("Loss/learning_rate", self.alg.learning_rate, it)
+
+    action_noise_std = float(self.cfg.policy.action_perturb_std)
+    self.writer.add_scalar("Policy/action_perturb_std", action_noise_std, it)
+
+    fps = int(collection_size / iteration_time) if iteration_time > 0 else 0
+    self.writer.add_scalar("Perf/total_fps", fps, it)
+    self.writer.add_scalar("Perf/collection_time", collect_time, it)
+    self.writer.add_scalar("Perf/learning_time", learn_time, it)
+
     for key, value in loss_dict["metrics"].items():
-      self.writer.add_scalar(f"Metrics/{key}", value, iteration)
+      self.writer.add_scalar(f"Metrics/{key}", value, it)
     if len(rewbuffer) > 0:
-      self.writer.add_scalar("Train/mean_reward", statistics.mean(rewbuffer), iteration)
-      self.writer.add_scalar("Train/mean_episode_length", statistics.mean(lenbuffer), iteration)
+      mean_reward = statistics.mean(rewbuffer)
+      mean_episode_length = statistics.mean(lenbuffer)
+      self.writer.add_scalar("Train/mean_reward", mean_reward, it)
+      self.writer.add_scalar("Train/mean_episode_length", mean_episode_length, it)
+      if self.writer.logger_type != "wandb":
+        self.writer.add_scalar("Train/mean_reward/time", mean_reward, int(self.tot_time))
+        self.writer.add_scalar("Train/mean_episode_length/time", mean_episode_length, int(self.tot_time))
+
+    width = 80
+    pad = 40
+    log_string = f'{"#" * width}\n'
+    log_string += f'\033[1m{f" Learning iteration {it}/{total_it} ".center(width)}\033[0m \n\n'
+    if self.cfg.run_name:
+      log_string += f'{"Run name:":>{pad}} {self.cfg.run_name}\n'
+    log_string += (
+      f'{"Total steps:":>{pad}} {self.tot_timesteps} \n'
+      f'{"Steps per second:":>{pad}} {fps:.0f} \n'
+      f'{"Collection time:":>{pad}} {collect_time:.3f}s \n'
+      f'{"Learning time:":>{pad}} {learn_time:.3f}s \n'
+    )
+    for key, value in scalar_losses.items():
+      log_string += f'{f"Mean {key} loss:":>{pad}} {float(value):.4f}\n'
+    if len(rewbuffer) > 0:
+      log_string += f'{"Mean reward:":>{pad}} {statistics.mean(rewbuffer):.2f}\n'
+      log_string += f'{"Mean episode length:":>{pad}} {statistics.mean(lenbuffer):.2f}\n'
+    log_string += f'{"Action perturb std:":>{pad}} {action_noise_std:.4f}\n'
+    log_string += extras_string
+    done_it = it + 1 - start_it
+    remaining_it = total_it - start_it - done_it
+    eta = self.tot_time / done_it * remaining_it if done_it > 0 else 0.0
+    log_string += (
+      f'{"-" * width}\n'
+      f'{"Iteration time:":>{pad}} {iteration_time:.2f}s\n'
+      f'{"Time elapsed:":>{pad}} {time.strftime("%H:%M:%S", time.gmtime(self.tot_time))}\n'
+      f'{"ETA:":>{pad}} {time.strftime("%H:%M:%S", time.gmtime(eta))}\n'
+    )
+    print(log_string)
+
+  def _build_logger_cfg_dict(self) -> dict:
+    cfg_dict = asdict(self.cfg)
+    cfg_dict.setdefault("algorithm", {})
+    cfg_dict["algorithm"].setdefault("rnd_cfg", None)
+    cfg_dict.setdefault("num_steps_per_env", self.num_steps_per_env)
+    return cfg_dict

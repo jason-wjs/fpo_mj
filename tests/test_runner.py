@@ -100,13 +100,20 @@ def test_runner_emits_startup_heartbeat_and_console_progress(monkeypatch, tmp_pa
     recorded_scalars = []
 
     class FakeLogger:
-        def __init__(self, log_dir):
+        def __init__(self, log_dir, cfg_dict=None):
             self.log_dir = log_dir
+            self.logger_type = "tensorboard"
 
         def add_scalar(self, tag, value, step):
             recorded_scalars.append((tag, value, step))
 
         def save_model(self, path, step):
+            return None
+
+        def store_config(self, env_cfg, train_cfg):
+            return None
+
+        def save_file(self, path):
             return None
 
         def close(self):
@@ -119,6 +126,45 @@ def test_runner_emits_startup_heartbeat_and_console_progress(monkeypatch, tmp_pa
     runner.learn(num_learning_iterations=1, init_at_random_ep_len=False)
 
     stdout = capsys.readouterr().out
-    assert "Starting iteration 0" in stdout
-    assert "Finished iteration 0" in stdout
+    assert "Learning iteration 0/1" in stdout
+    assert "Total steps:" in stdout
+    assert ("System/initialized", 1.0, 0) in recorded_scalars
+
+
+def test_runner_uses_official_wandb_writer(monkeypatch, tmp_path):
+    init_calls = []
+    stored_configs = []
+    recorded_scalars = []
+
+    class FakeWandbWriter:
+        def __init__(self, log_dir, flush_secs, cfg):
+            init_calls.append((log_dir, flush_secs, cfg))
+
+        def store_config(self, env_cfg, train_cfg):
+            stored_configs.append((env_cfg, train_cfg))
+
+        def add_scalar(self, tag, value, step):
+            recorded_scalars.append((tag, value, step))
+
+        def save_model(self, path, step):
+            return None
+
+        def save_file(self, path):
+            return None
+
+        def stop(self):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("rsl_rl.utils.wandb_utils.WandbSummaryWriter", FakeWandbWriter)
+    cfg = _make_cfg()
+    cfg.logger = "wandb"
+    runner = FpoOnPolicyRunner(FakeVecEnv(), cfg, log_dir=str(tmp_path), device="cpu")
+
+    runner.learn(num_learning_iterations=1, init_at_random_ep_len=False)
+
+    assert init_calls
+    assert stored_configs
     assert ("System/initialized", 1.0, 0) in recorded_scalars
