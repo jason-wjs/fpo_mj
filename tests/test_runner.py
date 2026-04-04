@@ -94,3 +94,31 @@ def test_runner_evaluate_returns_metrics_for_each_mode(tmp_path):
         assert mode["num_episodes"] >= 2
         assert "mean_reward" in mode
         assert "mean_episode_length" in mode
+
+
+def test_runner_emits_startup_heartbeat_and_console_progress(monkeypatch, tmp_path, capsys):
+    recorded_scalars = []
+
+    class FakeLogger:
+        def __init__(self, log_dir):
+            self.log_dir = log_dir
+
+        def add_scalar(self, tag, value, step):
+            recorded_scalars.append((tag, value, step))
+
+        def save_model(self, path, step):
+            return None
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("fpo_mj.runners.fpo_on_policy_runner._TensorboardLogger", FakeLogger)
+    cfg = _make_cfg()
+    runner = FpoOnPolicyRunner(FakeVecEnv(), cfg, log_dir=str(tmp_path), device="cpu")
+
+    runner.learn(num_learning_iterations=1, init_at_random_ep_len=False)
+
+    stdout = capsys.readouterr().out
+    assert "Starting iteration 0" in stdout
+    assert "Finished iteration 0" in stdout
+    assert ("System/initialized", 1.0, 0) in recorded_scalars

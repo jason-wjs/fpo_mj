@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import statistics
 from collections import deque
+from time import perf_counter
 
 import torch
 
@@ -104,6 +105,11 @@ class FpoOnPolicyRunner:
     cur_episode_length = torch.zeros(self.env.num_envs, dtype=torch.float, device=self.device)
 
     for it in range(self.current_learning_iteration, self.current_learning_iteration + num_learning_iterations):
+      iteration_start = perf_counter()
+      print(
+        f"[FPO] Starting iteration {it}: collecting {self.num_steps_per_env} rollout steps across {self.env.num_envs} envs.",
+        flush=True,
+      )
       for _ in range(self.num_steps_per_env):
         actions = self.alg.act(actor_obs, critic_obs)
         next_obs, rewards, dones, infos = self.env.step(actions.to(self.env.device))
@@ -132,6 +138,11 @@ class FpoOnPolicyRunner:
       self.current_learning_iteration = it
       self.tot_timesteps += self.num_steps_per_env * self.env.num_envs
       self._log_iteration(it, loss_dict, rewbuffer, lenbuffer)
+      iteration_duration = perf_counter() - iteration_start
+      print(
+        f"[FPO] Finished iteration {it}: total_timesteps={self.tot_timesteps}, duration_s={iteration_duration:.2f}",
+        flush=True,
+      )
       if self.log_dir is not None and it % self.save_interval == 0:
         self.save(os.path.join(self.log_dir, f"model_{it}.pt"))
 
@@ -246,6 +257,7 @@ class FpoOnPolicyRunner:
       self.writer = _WandbLogger(self.log_dir, self.cfg.wandb_project, self.cfg.run_name)
     else:
       self.writer = _TensorboardLogger(self.log_dir)
+    self.writer.add_scalar("System/initialized", 1.0, 0)
 
   def _log_iteration(self, iteration: int, loss_dict: dict, rewbuffer: deque, lenbuffer: deque):
     if self.writer is None:
