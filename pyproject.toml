@@ -27,6 +27,7 @@ dev = [
 [project.scripts]
 fpo-mj-train = "fpo_mj.scripts.train:main"
 fpo-mj-eval = "fpo_mj.scripts.eval:main"
+fpo-mj-play = "fpo_mj.scripts.play:main"
 
 [tool.setuptools.package-dir]
 "" = "src"

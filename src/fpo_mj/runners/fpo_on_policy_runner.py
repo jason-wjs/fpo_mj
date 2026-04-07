@@ -229,6 +229,32 @@ class FpoOnPolicyRunner:
       self.obs_normalizer.eval()
       self.critic_obs_normalizer.eval()
 
+  def get_inference_policy(
+    self,
+    device: str | None = None,
+    eval_mode: str = "zero",
+    eval_fixed_seed: int = 12345,
+  ):
+    inference_device = device or self.device
+    self.eval_mode()
+    self.alg.policy.to(inference_device)
+    if self.empirical_normalization:
+      self.obs_normalizer.to(inference_device)
+
+    def policy(observations) -> torch.Tensor:
+      actor_obs, _critic_obs = self.adapter.adapt(observations)
+      actor_obs = actor_obs.to(inference_device)
+      if self.empirical_normalization:
+        actor_obs = self.obs_normalizer(actor_obs)
+      with torch.no_grad():
+        return self.alg.policy.act_inference(
+          actor_obs,
+          eval_mode=eval_mode,
+          eval_fixed_seed=eval_fixed_seed,
+        )
+
+    return policy
+
   def evaluate(
     self,
     num_episodes: int,

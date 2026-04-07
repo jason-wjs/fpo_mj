@@ -96,6 +96,25 @@ def test_runner_evaluate_returns_metrics_for_each_mode(tmp_path):
         assert "mean_episode_length" in mode
 
 
+def test_runner_get_inference_policy_supports_viewer_eval_modes(tmp_path):
+    runner = FpoOnPolicyRunner(FakeVecEnv(), _make_cfg(), log_dir=str(tmp_path), device="cpu")
+    obs = runner.env.get_observations()
+
+    zero_policy = runner.get_inference_policy(device="cpu", eval_mode="zero")
+    random_policy = runner.get_inference_policy(device="cpu", eval_mode="random")
+    fixed_policy = runner.get_inference_policy(device="cpu", eval_mode="fixed_seed", eval_fixed_seed=7)
+
+    zero_actions = zero_policy(obs)
+    random_actions = random_policy(obs)
+    fixed_actions_a = fixed_policy(obs)
+    fixed_actions_b = fixed_policy(obs)
+
+    assert zero_actions.shape == (runner.env.num_envs, runner.env.num_actions)
+    assert random_actions.shape == (runner.env.num_envs, runner.env.num_actions)
+    assert fixed_actions_a.shape == (runner.env.num_envs, runner.env.num_actions)
+    assert torch.equal(fixed_actions_a, fixed_actions_b)
+
+
 def test_runner_emits_startup_heartbeat_and_console_progress(monkeypatch, tmp_path, capsys):
     recorded_scalars = []
 

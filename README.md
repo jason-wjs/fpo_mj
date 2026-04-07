@@ -1,6 +1,6 @@
 # fpo_mj
 
-FPO++ training on top of official `mjlab` tasks, without modifying a local `mjlab` checkout.
+FPO++ training on top of official `mjlab` tasks.
 
 This repository currently targets a single task:
 
@@ -43,7 +43,7 @@ src/fpo_mj/
   env/            TensorDict observation adapter
   modules/        Actor-critic, EMA, normalization
   runners/        FpoOnPolicyRunner
-  scripts/        train.py and eval.py
+  scripts/        train.py, eval.py, and play.py
   storage/        rollout storage
   supported_tasks.py
   utils/          small shared helpers
@@ -58,6 +58,7 @@ Stable public module entrypoints:
 - `fpo_mj.runners`
 - `fpo_mj.scripts.train`
 - `fpo_mj.scripts.eval`
+- `fpo_mj.scripts.play`
 
 ## Requirements
 
@@ -217,6 +218,43 @@ The FPO++ paper reports locomotion hyperparameters in the paper body and Appendi
 - the current supported task is `Mjlab-Velocity-Flat-Unitree-G1`
 
 This means the repository is suitable for controlled PPO vs. FPO comparisons on `mjlab`, but it is not an exact IsaacLab reproduction package.
+
+## Play / Visualization
+
+Use `play.py` for qualitative inspection of trained checkpoints. Unlike `eval.py`, this command opens a viewer and plays a policy in real time instead of aggregating episode metrics.
+
+### FPO Playback
+
+FPO playback supports flow initialization modes:
+
+- `zero`: start the flow from zeros
+- `random`: start the flow from fresh Gaussian noise
+- `fixed_seed`: start from deterministic Gaussian noise using `eval_fixed_seed`
+
+Example:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run python -m fpo_mj.scripts.play Mjlab-Velocity-Flat-Unitree-G1 \
+  --agent-type fpo \
+  --checkpoint-path logs/fpo_mj/g1_flat_fpo/<run_dir>/model_4999.pt \
+  --eval-mode zero \
+  --viewer native
+```
+
+### PPO Playback
+
+The same command also supports official `mjlab` PPO checkpoints:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 uv run python -m fpo_mj.scripts.play Mjlab-Velocity-Flat-Unitree-G1 \
+  --agent-type ppo \
+  --checkpoint-path logs/rsl_rl/g1_velocity/<run_dir>/model_4999.pt \
+  --viewer native
+```
+
+### Quick Launcher
+
+The repository root includes [`run_play.sh`](run_play.sh), matching the style of `run_train.sh`. It defaults to an FPO playback command and keeps PPO and alternate FPO modes as commented templates for quick editing.
 
 ## License
 
