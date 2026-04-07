@@ -10,6 +10,7 @@ import tyro
 
 from fpo_mj.config import FpoRunnerCfg, build_default_fpo_runner_cfg
 from fpo_mj.runners import FpoOnPolicyRunner
+from fpo_mj.supported_tasks import SUPPORTED_TASKS
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper
 from mjlab.tasks.registry import load_env_cfg
@@ -17,9 +18,6 @@ from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wandb import add_wandb_tags
 from mjlab.utils.wrappers import VideoRecorder
-
-SUPPORTED_TASKS = ("Mjlab-Velocity-Flat-Unitree-G1",)
-
 
 @dataclass
 class TrainConfig:

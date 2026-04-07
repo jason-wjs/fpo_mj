@@ -27,3 +27,12 @@ def test_build_default_fpo_runner_cfg_uses_g1_fpo_defaults():
     assert cfg.policy.critic_hidden_dims == (768, 768, 768)
     assert cfg.algorithm.n_samples_per_action == 32
     assert cfg.algorithm.num_learning_epochs == 32
+
+
+def test_build_default_fpo_runner_cfg_rejects_unknown_task():
+    try:
+        build_default_fpo_runner_cfg("Mjlab-Velocity-Flat-Does-Not-Exist")
+    except ValueError as exc:
+        assert "Mjlab-Velocity-Flat-Does-Not-Exist" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for unsupported task")

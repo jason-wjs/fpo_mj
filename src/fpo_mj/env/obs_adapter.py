@@ -26,9 +26,15 @@ class ObservationAdapter:
       value = observations[key]
       if not isinstance(value, torch.Tensor):
         raise TypeError(f"Observation '{key}' must be a tensor")
+      if value.ndim != 2:
+        raise ValueError(
+          f"expected 2D observation tensor for key '{key}', got shape {tuple(value.shape)}"
+        )
       parts.append(value)
 
     if not parts:
       raise ValueError(f"Observation group '{group_name}' is empty")
 
+    if len(parts) == 1:
+      return parts[0]
     return torch.cat(parts, dim=-1)

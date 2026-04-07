@@ -45,10 +45,19 @@ src/fpo_mj/
   runners/        FpoOnPolicyRunner
   scripts/        train.py and eval.py
   storage/        rollout storage
+  supported_tasks.py
   utils/          small shared helpers
 tests/
   ...             unit tests and smoke integration tests
 ```
+
+Stable public module entrypoints:
+
+- `fpo_mj.config`
+- `fpo_mj.env`
+- `fpo_mj.runners`
+- `fpo_mj.scripts.train`
+- `fpo_mj.scripts.eval`
 
 ## Requirements
 
