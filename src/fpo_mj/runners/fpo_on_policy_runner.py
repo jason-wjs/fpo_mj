@@ -153,8 +153,7 @@ class FpoOnPolicyRunner:
         obs_normalizer=self.obs_normalizer if self.empirical_normalization else None,
         privileged_obs_normalizer=self.critic_obs_normalizer if self.empirical_normalization else None,
       )
-      if self.alg.ema is not None:
-        self.alg.ema.update()
+      self._update_ema()
       stop = time.time()
       learn_time = stop - start
       self.current_learning_iteration = it
@@ -416,3 +415,11 @@ class FpoOnPolicyRunner:
     cfg_dict["algorithm"].setdefault("rnd_cfg", None)
     cfg_dict.setdefault("num_steps_per_env", self.num_steps_per_env)
     return cfg_dict
+
+  def _update_ema(self) -> None:
+    if self.alg.ema is None:
+      return
+    if self.alg.tot_timesteps == self.alg.ema_warmup_steps:
+      self.alg.ema.reset_to_current()
+    elif self.alg.tot_timesteps > self.alg.ema_warmup_steps:
+      self.alg.ema.update()

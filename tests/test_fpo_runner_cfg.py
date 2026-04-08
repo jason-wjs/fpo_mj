@@ -12,7 +12,6 @@ def test_build_default_fpo_runner_cfg_copies_official_common_fields():
     assert isinstance(cfg, FpoRunnerCfg)
     assert cfg.seed == official.seed
     assert cfg.obs_groups == official.obs_groups
-    assert cfg.clip_actions == official.clip_actions
     assert cfg.num_steps_per_env == official.num_steps_per_env
     assert cfg.max_iterations == official.max_iterations
     assert cfg.logger == official.logger
@@ -23,10 +22,13 @@ def test_build_default_fpo_runner_cfg_uses_g1_fpo_defaults():
     cfg = build_default_fpo_runner_cfg("Mjlab-Velocity-Flat-Unitree-G1")
 
     assert cfg.experiment_name == "g1_flat_fpo"
+    assert cfg.empirical_normalization is True
+    assert cfg.clip_actions == 2.0
     assert cfg.policy.actor_hidden_dims == (256, 256, 256)
     assert cfg.policy.critic_hidden_dims == (768, 768, 768)
     assert cfg.algorithm.n_samples_per_action == 32
     assert cfg.algorithm.num_learning_epochs == 32
+    assert cfg.algorithm.ema_warmup_steps == 500
 
 
 def test_build_default_fpo_runner_cfg_rejects_unknown_task():

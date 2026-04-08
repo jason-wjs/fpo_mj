@@ -52,13 +52,13 @@ class FpoAlgorithmCfg:
   cfm_loss_clamp_negative_advantages_max: float = 20.0
   storage_action_noise_std: float = 0.0
   ema_decay: float = 0.95
-  ema_warmup_steps: int = 0
+  ema_warmup_steps: int = 500
 
 
 @dataclass
 class FpoRunnerCfg(RslRlBaseRunnerCfg):
   class_name: str = "FpoOnPolicyRunner"
-  empirical_normalization: bool = False
+  empirical_normalization: bool = True
   randomize_reset_episode_progress: float = 0.0
   enable_post_training_eval: bool = True
   post_eval_checkpoint_interval: int = 1
@@ -95,4 +95,5 @@ def build_default_fpo_runner_cfg(task_id: str) -> FpoRunnerCfg:
   official = load_rl_cfg(task_id)
   kwargs = {field_name: getattr(official, field_name) for field_name in _COMMON_FIELDS}
   kwargs["experiment_name"] = "g1_flat_fpo"
+  kwargs["clip_actions"] = 2.0
   return FpoRunnerCfg(**kwargs)

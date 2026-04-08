@@ -187,3 +187,31 @@ def test_runner_uses_official_wandb_writer(monkeypatch, tmp_path):
     assert init_calls
     assert stored_configs
     assert ("System/initialized", 1.0, 0) in recorded_scalars
+
+
+def test_runner_defers_ema_updates_until_after_warmup():
+    class SpyEma:
+        def __init__(self):
+            self.reset_calls = 0
+            self.update_calls = 0
+            self.shadow_params = {}
+
+        def reset_to_current(self):
+            self.reset_calls += 1
+
+        def update(self):
+            self.update_calls += 1
+
+        def state_dict(self):
+            return {}
+
+    cfg = _make_cfg()
+    cfg.algorithm.ema_warmup_steps = 2
+    runner = FpoOnPolicyRunner(FakeVecEnv(), cfg, log_dir=None, device="cpu")
+    runner.alg.ema = SpyEma()
+
+    runner.learn(num_learning_iterations=3, init_at_random_ep_len=False)
+
+    assert runner.alg.tot_timesteps == 3
+    assert runner.alg.ema.reset_calls == 1
+    assert runner.alg.ema.update_calls == 1
